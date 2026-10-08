@@ -2462,6 +2462,31 @@ export const gatewayDailyActivityCall = async (accessToken: string, startTime: D
   }
 };
 
+export const requestErrorActivityCall = async (accessToken: string, startTime: Date, endTime: Date) => {
+  /**
+   * Failed requests by HTTP status and by the key, team, user and model group they land on.
+   * Deployment-wide and admin-only.
+   */
+  try {
+    const formatDate = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+    return await apiClient.get(`/gateway/errors/activity`, {
+      accessToken,
+      query: {
+        start_date: formatDate(startTime),
+        end_date: formatDate(endTime),
+      },
+    });
+  } catch (error) {
+    console.error("Failed to fetch request error activity:", error);
+    throw error;
+  }
+};
+
 export const getPossibleUserRoles = async (accessToken: string) => {
   try {
     const data = (await apiClient.get(`/user/available_roles`, { accessToken })) as Record<
