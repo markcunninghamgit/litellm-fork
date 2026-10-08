@@ -122,6 +122,18 @@ class SkillsSandboxExecutor:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmpdir_abs: Final = os.path.abspath(tmpdir)
                     for path, content in skill_files.items():
+                        # Reject paths that could escape the staging dir or the
+                        # sandbox root, or smuggle shell/python metacharacters
+                        # into downstream file operations.
+                        if (
+                            not path
+                            or "\\" in path
+                            or path.startswith("/")
+                            or any(part in (".", "..") for part in path.split("/"))
+                            or any(c.isspace() or ord(c) < 32 for c in path)
+                        ):
+                            verbose_logger.warning("SkillsSandboxExecutor: Skipping file with invalid path: %r", path)
+                            continue
                         # Create the file in temp directory
                         local_path = os.path.abspath(os.path.join(tmpdir, path))
                         if not local_path.startswith(tmpdir_abs + os.sep):

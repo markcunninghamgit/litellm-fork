@@ -85,3 +85,51 @@ def test_importing_proxy_hooks_does_not_mutate_litellm_callbacks():
         env={**os.environ, "LITELLM_LOCAL_MODEL_COST_MAP": "True"},
     )
     assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
+
+
+def test_is_importable_skill_path_accepts_identifier_paths():
+    from litellm.proxy.hooks.litellm_skills.main import _is_importable_skill_path
+
+    assert _is_importable_skill_path("main.py")
+    assert _is_importable_skill_path("core/gif_builder.py")
+    assert _is_importable_skill_path("_private/module_2.py")
+
+
+def test_is_importable_skill_path_rejects_injection_payloads():
+    from litellm.proxy.hooks.litellm_skills.main import _is_importable_skill_path
+
+    malicious_paths = [
+        "x'+__import__('os').system('id')+'.py",
+        "a/__import__('os').py",
+        "a b/main.py",
+        "../escape.py",
+        "dir/../main.py",
+        "a;b/main.py",
+        "main .py",
+        "loop.py\x00",
+    ]
+    for path in malicious_paths:
+        assert not _is_importable_skill_path(path), path
+
+
+@pytest.mark.asyncio
+async def test_execute_skill_tool_rejects_malicious_module_path():
+    """A skill filename carrying code-injection payloads must never reach the generated code."""
+    hook = SkillsInjectionHook()
+    malicious = "x'+__import__('os').system('touch /tmp/pwned')+'.py"
+    with patch.object(
+        hook,
+        "_execute_code",
+        new=AsyncMock(return_value="executed"),
+    ) as mock_exec:
+        await hook._execute_skill_tool(
+            tool_name=SKILL_TOOL_NAME,
+            tool_input={},
+            skill_files={"SKILL.md": b"x", malicious: b"print('hi')"},
+            executor=object(),
+            generated_files=[],
+        )
+    generated_code = mock_exec.await_args.args[0]
+    assert malicious not in generated_code
+    assert "__import__('os')" not in generated_code
+    assert "No executable skill module found" in generated_code
