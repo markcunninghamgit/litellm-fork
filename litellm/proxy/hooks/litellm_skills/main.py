@@ -26,6 +26,7 @@ Usage:
 
 import base64
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
@@ -98,6 +99,19 @@ class _GeneratedFileEntry(TypedDict):
 
 _TOOL_CALL_ARGS_ADAPTER: Final = TypeAdapter(_CodeExecutionToolArgs)
 _EXEC_RESULT_FILES_ADAPTER: Final = TypeAdapter(Sequence[_GeneratedFileEntry])
+
+_SKILL_PATH_SEGMENT_PATTERN: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _is_importable_skill_path(path: str) -> bool:
+    """True when every path segment of a skill file is a valid Python identifier.
+
+    Generated skill code imports these paths via `__import__`, so a segment
+    containing quotes or other characters could escape the generated source and
+    inject arbitrary code. Non-identifier paths are rejected outright.
+    """
+    segments = path.removesuffix(".py").split("/")
+    return bool(segments) and all(_SKILL_PATH_SEGMENT_PATTERN.match(s) for s in segments)
 
 
 def _first_choice(response: _ChatCompletion) -> _ChatChoice:
@@ -668,8 +682,17 @@ class SkillsInjectionHook(CustomLogger):
     ) -> str:
         """Execute a skill tool by generating and running code based on skill content."""
         # Generate code based on available skill modules
-        # Look for Python modules in the skill
-        python_modules: Final = [p for p in skill_files if p.endswith(".py") and not p.endswith("__init__.py")]
+        # Look for Python modules in the skill.
+        # Only modules whose path segments are valid Python identifiers can be
+        # imported safely; anything else could break out of the generated
+        # `__import__` string and inject arbitrary code, so it is skipped.
+        python_modules: Final = [
+            p
+            for p in skill_files
+            if p.endswith(".py")
+            and not p.endswith("__init__.py")
+            and _is_importable_skill_path(p)
+        ]
 
         # Try to find the main builder/creator module
         main_module = None
@@ -684,7 +707,7 @@ class SkillsInjectionHook(CustomLogger):
 
         if main_module:
             # Convert path to import: "core/gif_builder.py" -> "core.gif_builder"
-            import_path: Final = main_module.replace("/", ".").replace(".py", "")
+            import_path: Final = main_module.removesuffix(".py").replace("/", ".")
 
             # Generate code that imports and uses the module
             code = f"""
